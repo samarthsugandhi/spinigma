@@ -46,11 +46,12 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
   const elapsedRef = useRef(initialState.globalElapsed || 0);
   const [toasts, setToasts] = useState<Array<{ id: number; msg: string; type: string }>>([]);
   const toastId = useRef(0);
-  const [tabSwitches, setTabSwitches] = useState<Array<{ time: number }>>([]);
+  const [tabSwitches, setTabSwitches] = useState<Array<{ time: number }>>(initialState.tabSwitches || []);
   const [tabWarning, setTabWarning] = useState(false);
+  // Track fullscreen request state (used to re-request if exited)
+  const fsRequested = useRef(false);
 
   const stateRef = useRef<any>({});
-
   useEffect(() => {
     stateRef.current = {
       spinCount, score, answered, skippedCount, correctCount, wrongCount,
@@ -59,56 +60,162 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
     };
   });
 
-  // Tab switch detection - anti-cheat
+  // ── Toast helper ────────────────────────────────────────────────────────────
+  const toast = useCallback((msg: string, type = '') => {
+    const id = toastId.current++;
+    setToasts(prev => [...prev, { id, msg, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3200);
+  }, []);
+
+  // ── Sync tab-switch count to Firestore ──────────────────────────────────────
+  const syncTabSwitch = useCallback(async (switches: Array<{ time: number }>) => {
+    try {
+      const teams = await fetchTeams();
+      if (teams[teamName]) {
+        teams[teamName].tabSwitches = switches;
+        teams[teamName].tabSwitchCount = switches.length;
+      } else {
+        teams[teamName] = {
+          name: teamName,
+          tabSwitches: switches,
+          tabSwitchCount: switches.length,
+        };
+      }
+      await saveTeamData(teams);
+    } catch (e) {
+      console.error('syncTabSwitch error:', e);
+    }
+  }, [teamName]);
+
+  // ── Anti-cheat: request fullscreen on game start ────────────────────────────
+  useEffect(() => {
+    const requestFs = async () => {
+      try {
+        if (document.fullscreenElement) return; // already fullscreen
+        await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+        fsRequested.current = true;
+      } catch {
+        // Browser may deny; that's okay — other guards still apply
+      }
+    };
+    requestFs();
+
+    // If user manually exits fullscreen, re-request it
+    const onFsChange = async () => {
+      if (!document.fullscreenElement && fsRequested.current) {
+        toast('🔒 Fullscreen exited! Returning to fullscreen…', 'err');
+        try {
+          await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+        } catch { /* ignore */ }
+      }
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+      // Exit fullscreen when game ends / user logs out
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+    };
+  }, [toast]);
+
+  // ── Anti-cheat: tab-switch detection ────────────────────────────────────────
   useEffect(() => {
     const handleVisibility = () => {
       if (document.hidden) {
         const entry = { time: Date.now() };
         setTabSwitches(prev => {
           const updated = [...prev, entry];
-          // Immediately sync to server
           syncTabSwitch(updated);
           return updated;
         });
         setTabWarning(true);
         playTabSwitchWarning();
         toast('⚠️ Tab switch detected! Admin has been notified.', 'err');
-        setTimeout(() => setTabWarning(false), 3000);
+        setTimeout(() => setTabWarning(false), 3500);
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, []);
+  }, [syncTabSwitch, toast]);
 
-  const syncTabSwitch = useCallback(async (switches: Array<{ time: number }>) => {
-    const teams = await fetchTeams();
-    if (teams[teamName]) {
-      teams[teamName].tabSwitches = switches;
-      teams[teamName].tabSwitchCount = switches.length;
-      await saveTeamData(teams);
+  // ── Anti-cheat: block right-click, text-select, copy/screenshot keys ────────
+  useEffect(() => {
+    // Disable text selection via CSS
+    const styleId = 'anti-cheat-style';
+    if (!document.getElementById(styleId)) {
+      const el = document.createElement('style');
+      el.id = styleId;
+      el.textContent =
+        'body{-webkit-user-select:none!important;user-select:none!important;pointer-events:auto;}' +
+        'input,textarea{-webkit-user-select:text!important;user-select:text!important;}';
+      document.head.appendChild(el);
     }
-  }, [teamName]);
 
-  const toast = (msg: string, type = '') => {
-    const id = toastId.current++;
-    setToasts(prev => [...prev, { id, msg, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3200);
-  };
+    const blockCtxMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      toast('🚫 Right-click is disabled during the game.', 'err');
+    };
 
+    const blockKeys = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      // Block Ctrl/Cmd + C (copy), A (select-all), S (save), P (print), U (view-source)
+      if ((e.ctrlKey || e.metaKey) && ['c', 'a', 's', 'p', 'u'].includes(key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        toast('🚫 This action is blocked during the game.', 'err');
+        return;
+      }
+      // Block PrintScreen / Snapshot keys
+      if (['printscreen', 'print', 'snapshot'].includes(key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        toast('🚫 Screenshots are disabled during the game.', 'err');
+        return;
+      }
+      // Block F12 DevTools
+      if (key === 'f12') {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    document.addEventListener('contextmenu', blockCtxMenu);
+    document.addEventListener('keydown', blockKeys, true);
+
+    return () => {
+      document.removeEventListener('contextmenu', blockCtxMenu);
+      document.removeEventListener('keydown', blockKeys, true);
+      document.getElementById(styleId)?.remove();
+    };
+  }, [toast]);
+
+  // ── General team sync ────────────────────────────────────────────────────────
   const syncTeam = useCallback(async (overrides?: any) => {
     const state = { ...stateRef.current, ...overrides };
     const teams = await fetchTeams();
     teams[teamName] = {
       ...teams[teamName],
-      score: state.score, answered: state.answered, skippedCount: state.skippedCount,
-      correctCount: state.correctCount, wrongCount: state.wrongCount, spinCount: state.spinCount,
-      usedDivisions: state.usedDivisions, attemptLog: state.attemptLog, globalElapsed: state.globalElapsed,
+      score: state.score,
+      answered: state.answered,
+      skippedCount: state.skippedCount,
+      correctCount: state.correctCount,
+      wrongCount: state.wrongCount,
+      spinCount: state.spinCount,
+      usedDivisions: state.usedDivisions,
+      attemptLog: state.attemptLog,
+      globalElapsed: state.globalElapsed,
+      // Preserve anti-cheat data through regular syncs
+      tabSwitches: state.tabSwitches,
+      tabSwitchCount: (state.tabSwitches || []).length,
       finished: state.spinCount >= MAX_SPINS || state.usedDivisions.length >= Math.min(TOTAL_DIVISIONS, questions.length),
       last: Date.now(),
     };
     await saveTeamData(teams);
   }, [teamName, questions.length]);
 
+  // Global timer + periodic sync
   useEffect(() => {
     globalTimerRef.current = setInterval(() => {
       elapsedRef.current++;
@@ -127,7 +234,13 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
     if (isGameOver && !currentQuestion) {
       if (globalTimerRef.current) clearInterval(globalTimerRef.current);
       playGameCompleteSound();
-      const finalState = { ...stateRef.current, globalElapsed: elapsedRef.current, finished: true, tabSwitches };
+      const finalState = {
+        ...stateRef.current,
+        globalElapsed: elapsedRef.current,
+        finished: true,
+        tabSwitches,
+        tabSwitchCount: tabSwitches.length,
+      };
       syncTeam(finalState);
       setTimeout(() => onFinish(finalState), 500);
     }
@@ -228,10 +341,15 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
             <span className="pill-icon">🎰</span>
             <span>{spinCount}/{MAX_SPINS}</span>
           </div>
+          {/* Live tab-switch counter shown in top bar */}
           {tabSwitches.length > 0 && (
-            <div className="topbar-pill" style={{ background: 'hsl(0 84% 60% / 0.15)', border: '1px solid hsl(0 84% 60% / 0.3)', color: 'hsl(0 84% 65%)' }}>
+            <div className="topbar-pill" style={{
+              background: 'hsl(0 84% 60% / 0.15)',
+              border: '1px solid hsl(0 84% 60% / 0.4)',
+              color: 'hsl(0 84% 65%)',
+            }}>
               <span className="pill-icon">⚠️</span>
-              <span>{tabSwitches.length} switch{tabSwitches.length > 1 ? 'es' : ''}</span>
+              <span>Switch: {tabSwitches.length}</span>
             </div>
           )}
           <button onClick={onLogout} className="topbar-exit">✕ Exit</button>
@@ -239,7 +357,6 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
 
         {/* Main content */}
         <div className="game-main">
-          {/* Left panel */}
           <GameSidePanel
             side="left"
             spinCount={spinCount}
@@ -250,7 +367,6 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
             attemptLog={attemptLog}
           />
 
-          {/* Center - Spinner */}
           <div className="game-center">
             <SpinnerWheel
               divisions={availableDivisions}
@@ -261,7 +377,6 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
             />
           </div>
 
-          {/* Right panel */}
           <GameSidePanel
             side="right"
             spinCount={spinCount}
@@ -282,17 +397,32 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
             open={!!currentQuestion}
           />
         )}
+
+        {/* Tab-switch overlay warning */}
         {tabWarning && (
           <div style={{
-            position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'hsl(0 100% 10% / 0.85)', backdropFilter: 'blur(8px)',
+            position: 'fixed', inset: 0, zIndex: 9999,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'hsl(0 100% 8% / 0.92)', backdropFilter: 'blur(10px)',
             animation: 'mIn 0.2s ease-out',
           }}>
             <div style={{ textAlign: 'center', color: 'hsl(0 84% 65%)' }}>
-              <div style={{ fontSize: '4rem', marginBottom: '12px' }}>⚠️</div>
-              <div style={{ fontFamily: "'Nunito',sans-serif", fontSize: '1.5rem', fontWeight: 900, letterSpacing: '2px', marginBottom: '8px' }}>TAB SWITCH DETECTED</div>
-              <div style={{ fontSize: '0.9rem', color: 'hsl(0 60% 75%)', fontWeight: 600 }}>This violation has been logged and reported to admin.</div>
-              <div style={{ fontSize: '0.8rem', color: 'hsl(0 40% 60%)', marginTop: '6px' }}>Total violations: {tabSwitches.length}</div>
+              <div style={{ fontSize: '4.5rem', marginBottom: '12px' }}>🚨</div>
+              <div style={{
+                fontFamily: "'Nunito',sans-serif", fontSize: '1.8rem', fontWeight: 900,
+                letterSpacing: '3px', marginBottom: '10px', textTransform: 'uppercase',
+              }}>Tab Switch Detected!</div>
+              <div style={{ fontSize: '0.95rem', color: 'hsl(0 60% 75%)', fontWeight: 600, marginBottom: '6px' }}>
+                This violation has been logged and reported to admin.
+              </div>
+              <div style={{
+                display: 'inline-block',
+                background: 'hsl(0 84% 60% / 0.2)', border: '1px solid hsl(0 84% 60% / 0.4)',
+                color: 'hsl(0 84% 70%)', padding: '6px 18px', borderRadius: '50px',
+                fontSize: '0.88rem', fontWeight: 800, letterSpacing: '1px',
+              }}>
+                Total Violations: {tabSwitches.length}
+              </div>
             </div>
           </div>
         )}

@@ -34,6 +34,8 @@ export async function fetchTeams(): Promise<Record<string, any>> {
           finished: row.finished,
           joinedAt: row.joined_at,
           globalElapsed: row.global_elapsed,
+          tabSwitchCount: row.tab_switch_count || 0,
+          tabSwitches: row.tab_switches || [],
         };
       });
     }
@@ -64,6 +66,8 @@ export async function saveTeamData(teams: Record<string, any>): Promise<boolean>
         finished: t.finished || false,
         global_elapsed: t.globalElapsed || 0,
         joined_at: t.joinedAt || Date.now(),
+        tab_switch_count: t.tabSwitchCount || 0,
+        tab_switches: t.tabSwitches || [],
       };
       const docRef = doc(db, 'teams', name);
       batch.set(docRef, row, { merge: true });
