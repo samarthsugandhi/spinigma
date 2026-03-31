@@ -3,7 +3,7 @@ import LoginScreen from '@/components/LoginScreen';
 import GameScreen from '@/components/GameScreen';
 import FinishScreen from '@/components/FinishScreen';
 import AdminScreen from '@/components/AdminScreen';
-import { fetchQuestions, fetchTeams, saveTeamData, getAdminPass, getQCache } from '@/lib/gameStore';
+import { fetchQuestions, fetchTeams, saveTeamData, isAdminPassValid, getQCache } from '@/lib/gameStore';
 import { getTeamQuestions, Question } from '@/lib/questions';
 
 type Screen = 'login' | 'game' | 'finish' | 'admin';
@@ -24,20 +24,21 @@ const Index = () => {
   }, []);
 
   const handleTeamLogin = async (name: string, lead: string) => {
-    if (!name.trim()) { toast('Enter a team name!', 'err'); return; }
+    const teamId = name.trim().toUpperCase();
+    if (!teamId) { toast('Enter team ID!', 'err'); return; }
+    if (!/^IS-TP-\d{3}$/.test(teamId)) { toast('Team ID must be like IS-TP-001', 'err'); return; }
     if (!lead.trim()) { toast('Enter the team lead name!', 'err'); return; }
-    if (name.toLowerCase() === 'admin') { toast('Reserved name!', 'err'); return; }
+    if (teamId.toLowerCase() === 'admin') { toast('Reserved name!', 'err'); return; }
 
     await fetchQuestions();
     const teams = await fetchTeams();
-    const qs = getTeamQuestions(name, getQCache());
+    const qs = getTeamQuestions(teamId, getQCache());
 
-    if (teams[name]) {
-      const t = teams[name];
+    if (teams[teamId]) {
+      const t = teams[teamId];
       setInitialState({
         score: t.score || 0,
         answered: t.answered || 0,
-        skippedCount: t.skippedCount || 0,
         correctCount: t.correctCount || 0,
         wrongCount: t.wrongCount || 0,
         spinCount: t.spinCount || 0,
@@ -45,24 +46,24 @@ const Index = () => {
         attemptLog: t.attemptLog || [],
         globalElapsed: t.globalElapsed || 0,
       });
-      toast(`Welcome back, ${name}! 🎡`, 'ok');
+      toast(`Welcome back, ${teamId}! 🎡`, 'ok');
     } else {
-      teams[name] = {
-        name, lead, score: 0, answered: 0, skippedCount: 0, correctCount: 0, wrongCount: 0,
+      teams[teamId] = {
+        name: teamId, lead, score: 0, answered: 0, correctCount: 0, wrongCount: 0,
         spinCount: 0, usedDivisions: [], attemptLog: [], finished: false, joinedAt: Date.now(), globalElapsed: 0,
       };
       await saveTeamData(teams);
       setInitialState({});
-      toast(`Team "${name}" registered! 🎡`, 'ok');
+      toast(`Team "${teamId}" registered! 🎡`, 'ok');
     }
 
-    setTeamName(name);
+    setTeamName(teamId);
     setQuestions(qs);
     setScreen('game');
   };
 
   const handleAdminLogin = async (pass: string) => {
-    if (pass !== getAdminPass()) { toast('Wrong passphrase!', 'err'); return; }
+    if (!isAdminPassValid(pass)) { toast('Wrong passphrase!', 'err'); return; }
     await fetchQuestions();
     await fetchTeams();
     setScreen('admin');

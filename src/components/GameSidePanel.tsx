@@ -14,7 +14,6 @@ const GameSidePanel: React.FC<GameSidePanelProps> = ({
   side, spinCount, maxSpins, availableCount, totalDivisions, attemptLog,
 }) => {
   const answeredLog = attemptLog.filter(a => a.action === 'answered');
-  const skippedLog = attemptLog.filter(a => a.action === 'skipped');
   const usedCount = totalDivisions - availableCount;
   const progressPct = Math.round((usedCount / totalDivisions) * 100);
 
@@ -38,7 +37,7 @@ const GameSidePanel: React.FC<GameSidePanelProps> = ({
             </li>
             <li className="sp-instruction-item">
               <span className="sp-step-num">3</span>
-              <span><strong>Answer</strong> or <strong>Skip</strong> the question</span>
+              <span><strong>Answer</strong> the question before timer ends</span>
             </li>
             <li className="sp-instruction-item">
               <span className="sp-step-num">4</span>
@@ -86,7 +85,7 @@ const GameSidePanel: React.FC<GameSidePanelProps> = ({
     );
   }
 
-  // RIGHT side: Attempted & Skipped segments
+  // RIGHT side: Attempted segments
   return (
     <div className="side-panel side-panel-right">
       {/* Attempted Card */}
@@ -113,30 +112,6 @@ const GameSidePanel: React.FC<GameSidePanelProps> = ({
         </div>
       </div>
 
-      {/* Skipped Card */}
-      <div className="sp-card sp-card-skipped animate-slide-in-right" style={{ animationDelay: '0.1s' }}>
-        <div className="sp-card-header">
-          <span className="sp-card-icon">⏭</span>
-          <span className="sp-card-title">Skipped</span>
-          <span className="sp-card-badge sp-badge-skipped">{skippedLog.length}</span>
-        </div>
-        <div className="sp-segment-list">
-          {skippedLog.length === 0 ? (
-            <div className="sp-empty-state">
-              <span className="sp-empty-icon">✨</span>
-              <span>None skipped yet — great start!</span>
-            </div>
-          ) : (
-            skippedLog.map((log, i) => (
-              <div key={i} className="sp-segment-chip sp-chip-skipped animate-pop-in" style={{ animationDelay: `${i * 0.05}s` }}>
-                <span className="sp-chip-label">Q{log.qIndex + 1}</span>
-                <span className="sp-chip-dot sp-dot-skipped">●</span>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
       {/* Tips Card */}
       <div className="sp-card sp-card-tips animate-slide-in-right" style={{ animationDelay: '0.2s' }}>
         <div className="sp-card-header">
@@ -146,7 +121,7 @@ const GameSidePanel: React.FC<GameSidePanelProps> = ({
         <div className="sp-tips-list">
           <div className="sp-tip-item">🧠 Read questions carefully before answering</div>
           <div className="sp-tip-item">⚡ Harder questions earn more points</div>
-          <div className="sp-tip-item">🎯 Skip wisely — you can't go back!</div>
+          <div className="sp-tip-item">⏱ Unanswered before timeout counts as wrong</div>
         </div>
       </div>
     </div>

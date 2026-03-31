@@ -53,7 +53,7 @@ const FinishScreen: React.FC<FinishScreenProps> = ({ teamName, state, onLogout }
           {[
             { val: state.spinCount || 0, label: 'Spins', color: 'hsl(270 95% 65%)' },
             { val: state.answered || 0, label: 'Answered', color: 'hsl(155 80% 45%)' },
-            { val: state.skippedCount || 0, label: 'Skipped', color: 'hsl(25 95% 60%)' },
+            { val: state.correctCount || 0, label: 'Correct', color: 'hsl(185 90% 50%)' },
           ].map(s => (
             <div key={s.label} style={{
               background: 'hsl(250 30% 10% / 0.8)', borderRadius: '16px', padding: '15px',

@@ -11,8 +11,9 @@ export interface Question {
 export const DEFAULT_QUESTIONS: Question[] = [];
 
 export const Q_TIMERS: Record<string, number> = { easy: 30, medium: 45, hard: 60 };
-export const MAX_SPINS = 30;
-export const TOTAL_DIVISIONS = 35;
+export const MAX_SPINS = 15;
+export const TOTAL_DIVISIONS = 18;
+export const GAME_TIME_LIMIT_SECONDS = 15 * 60;
 
 export function seededShuffle<T>(arr: T[], seed: number): T[] {
   const a = [...arr];

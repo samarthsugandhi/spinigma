@@ -1,18 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Question, Q_TIMERS, norm } from '@/lib/questions';
-import { playCorrectSound, playWrongSound, playSkipSound } from '@/lib/sounds';
+import { playCorrectSound, playWrongSound } from '@/lib/sounds';
 
 interface QuestionModalProps {
   question: Question;
   divisionIndex: number;
   onSubmit: (correct: boolean) => void;
-  onSkip: () => void;
   open: boolean;
 }
 
 const RING_CIRC = 201;
 
-const QuestionModal: React.FC<QuestionModalProps> = ({ question, divisionIndex, onSubmit, onSkip, open }) => {
+const QuestionModal: React.FC<QuestionModalProps> = ({ question, divisionIndex, onSubmit, open }) => {
   const [selectedOpt, setSelectedOpt] = useState<number | null>(null);
   const [textInput, setTextInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -20,11 +19,29 @@ const QuestionModal: React.FC<QuestionModalProps> = ({ question, divisionIndex, 
   const [timeLeft, setTimeLeft] = useState(0);
   const [totalTime, setTotalTime] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const autoSkipRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSubmitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const submittingRef = useRef(false);
   const textRef = useRef<HTMLInputElement>(null);
+
+  const clearTimers = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (autoSubmitRef.current) clearTimeout(autoSubmitRef.current);
+  };
+
+  const finalize = (correct: boolean, message: string, delayMs: number) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    clearTimers();
+    setFeedback(message);
+    if (correct) playCorrectSound();
+    else playWrongSound();
+    setTimeout(() => onSubmit(correct), delayMs);
+  };
 
   useEffect(() => {
     if (open) {
+      submittingRef.current = false;
       setSelectedOpt(null); setTextInput(''); setSubmitting(false); setFeedback('');
       const dur = Q_TIMERS[question.diff] || 30;
       setTimeLeft(dur); setTotalTime(dur);
@@ -36,18 +53,19 @@ const QuestionModal: React.FC<QuestionModalProps> = ({ question, divisionIndex, 
         });
       }, 1000);
 
-      autoSkipRef.current = setTimeout(() => { onSkip(); }, dur * 1000);
+      autoSubmitRef.current = setTimeout(() => {
+        finalize(false, '⏰ Time up! Marked wrong.', 900);
+      }, dur * 1000);
 
       if (question.type === 'tite') setTimeout(() => textRef.current?.focus(), 200);
     }
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (autoSkipRef.current) clearTimeout(autoSkipRef.current);
+      clearTimers();
     };
   }, [open, question]);
 
   const handleSubmit = () => {
-    if (submitting) return;
+    if (submittingRef.current) return;
     let correct = false;
     if (!question.type || question.type === 'mcq') {
       if (selectedOpt === null) return;
@@ -56,27 +74,11 @@ const QuestionModal: React.FC<QuestionModalProps> = ({ question, divisionIndex, 
       if (!textInput.trim()) return;
       correct = norm(textInput.trim()) === norm(String(question.ans));
     }
-    setSubmitting(true);
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (autoSkipRef.current) clearTimeout(autoSkipRef.current);
     if (correct) {
-      playCorrectSound();
-      setFeedback('✅ Correct! Well done!');
-    } else {
-      playWrongSound();
-      setFeedback('❌ Wrong answer!');
+      finalize(true, '✅ Correct! Well done!', 1100);
+      return;
     }
-    setTimeout(() => onSubmit(correct), 1100);
-  };
-
-  const handleSkip = () => {
-    if (submitting) return;
-    setSubmitting(true);
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (autoSkipRef.current) clearTimeout(autoSkipRef.current);
-    playSkipSound();
-    setFeedback('⏭ Skipped!');
-    setTimeout(() => onSkip(), 800);
+    finalize(false, '❌ Wrong answer!', 1100);
   };
 
   if (!open) return null;
@@ -221,15 +223,6 @@ const QuestionModal: React.FC<QuestionModalProps> = ({ question, divisionIndex, 
               cursor: submitting ? 'not-allowed' : 'pointer',
             }}
           >⚔ Submit</button>
-          <button onClick={handleSkip} disabled={submitting}
-            style={{
-              padding: '11px 18px', fontFamily: "'Space Grotesk', sans-serif", fontSize: '0.72rem',
-              fontWeight: 800, letterSpacing: '1.5px', textTransform: 'uppercase',
-              border: '1.5px solid hsl(0 84% 60% / 0.25)', cursor: submitting ? 'not-allowed' : 'pointer',
-              borderRadius: '12px', background: 'hsl(0 84% 60% / 0.08)', color: 'hsl(0 84% 65%)',
-              opacity: submitting ? 0.4 : 1, transition: 'all 0.2s',
-            }}
-          >⏭ Skip</button>
         </div>
       </div>
     </div>

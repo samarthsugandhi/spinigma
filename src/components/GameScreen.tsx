@@ -3,8 +3,8 @@ import SpinnerWheel from '@/components/SpinnerWheel';
 import QuestionModal from '@/components/QuestionModal';
 import OrbBackground from '@/components/OrbBackground';
 import GameSidePanel from '@/components/GameSidePanel';
-import { Question, MAX_SPINS, TOTAL_DIVISIONS } from '@/lib/questions';
-import { fetchTeams, saveTeamData } from '@/lib/gameStore';
+import { Question, MAX_SPINS, TOTAL_DIVISIONS, GAME_TIME_LIMIT_SECONDS } from '@/lib/questions';
+import { upsertTeamProgress } from '@/lib/gameStore';
 import { playGameCompleteSound, playTabSwitchWarning } from '@/lib/sounds';
 
 interface GameScreenProps {
@@ -35,7 +35,6 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
   const [spinCount, setSpinCount] = useState(initialState.spinCount || 0);
   const [score, setScore] = useState(initialState.score || 0);
   const [answered, setAnswered] = useState(initialState.answered || 0);
-  const [skippedCount, setSkippedCount] = useState(initialState.skippedCount || 0);
   const [correctCount, setCorrectCount] = useState(initialState.correctCount || 0);
   const [wrongCount, setWrongCount] = useState(initialState.wrongCount || 0);
   const [usedDivisions, setUsedDivisions] = useState<Set<number>>(new Set(initialState.usedDivisions || []));
@@ -50,11 +49,12 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
   const [tabWarning, setTabWarning] = useState(false);
   // Track fullscreen request state (used to re-request if exited)
   const fsRequested = useRef(false);
+  const finishTriggeredRef = useRef(false);
 
   const stateRef = useRef<any>({});
   useEffect(() => {
     stateRef.current = {
-      spinCount, score, answered, skippedCount, correctCount, wrongCount,
+      spinCount, score, answered, correctCount, wrongCount,
       usedDivisions: Array.from(usedDivisions), attemptLog, globalElapsed: elapsedRef.current,
       tabSwitches,
     };
@@ -70,18 +70,11 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
   // ── Sync tab-switch count to Firestore ──────────────────────────────────────
   const syncTabSwitch = useCallback(async (switches: Array<{ time: number }>) => {
     try {
-      const teams = await fetchTeams();
-      if (teams[teamName]) {
-        teams[teamName].tabSwitches = switches;
-        teams[teamName].tabSwitchCount = switches.length;
-      } else {
-        teams[teamName] = {
-          name: teamName,
-          tabSwitches: switches,
-          tabSwitchCount: switches.length,
-        };
-      }
-      await saveTeamData(teams);
+      await upsertTeamProgress(teamName, {
+        tabSwitches: switches,
+        tabSwitchCount: switches.length,
+        last: Date.now(),
+      });
     } catch (e) {
       console.error('syncTabSwitch error:', e);
     }
@@ -194,12 +187,9 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
   // ── General team sync ────────────────────────────────────────────────────────
   const syncTeam = useCallback(async (overrides?: any) => {
     const state = { ...stateRef.current, ...overrides };
-    const teams = await fetchTeams();
-    teams[teamName] = {
-      ...teams[teamName],
+    await upsertTeamProgress(teamName, {
       score: state.score,
       answered: state.answered,
-      skippedCount: state.skippedCount,
       correctCount: state.correctCount,
       wrongCount: state.wrongCount,
       spinCount: state.spinCount,
@@ -209,34 +199,46 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
       // Preserve anti-cheat data through regular syncs
       tabSwitches: state.tabSwitches,
       tabSwitchCount: (state.tabSwitches || []).length,
-      finished: state.spinCount >= MAX_SPINS || state.usedDivisions.length >= Math.min(TOTAL_DIVISIONS, questions.length),
+      finished: state.spinCount >= MAX_SPINS || state.usedDivisions.length >= Math.min(TOTAL_DIVISIONS, questions.length) || state.globalElapsed >= GAME_TIME_LIMIT_SECONDS,
       last: Date.now(),
-    };
-    await saveTeamData(teams);
+      skippedCount: 0,
+    });
   }, [teamName, questions.length]);
 
   // Global timer + periodic sync
   useEffect(() => {
     globalTimerRef.current = setInterval(() => {
+      if (finishTriggeredRef.current) return;
       elapsedRef.current++;
+      if (elapsedRef.current >= GAME_TIME_LIMIT_SECONDS) {
+        elapsedRef.current = GAME_TIME_LIMIT_SECONDS;
+        setGlobalElapsed(elapsedRef.current);
+        setCurrentQuestion(null);
+        toast('⏰ Time is up! Game closed after 15 minutes.', 'warn');
+        if (globalTimerRef.current) clearInterval(globalTimerRef.current);
+        syncTeam({ globalElapsed: elapsedRef.current, finished: true });
+        return;
+      }
       setGlobalElapsed(elapsedRef.current);
       if (elapsedRef.current % 30 === 0) syncTeam();
     }, 1000);
     return () => { if (globalTimerRef.current) clearInterval(globalTimerRef.current); };
-  }, [syncTeam]);
+  }, [syncTeam, toast]);
 
   const availableDivisions = Array.from({ length: Math.min(TOTAL_DIVISIONS, questions.length) }, (_, i) => i)
     .filter(i => !usedDivisions.has(i));
 
-  const isGameOver = spinCount >= MAX_SPINS || availableDivisions.length === 0;
+  const isGameOver = spinCount >= MAX_SPINS || availableDivisions.length === 0 || globalElapsed >= GAME_TIME_LIMIT_SECONDS;
 
   useEffect(() => {
-    if (isGameOver && !currentQuestion) {
+    if (isGameOver && !finishTriggeredRef.current) {
+      finishTriggeredRef.current = true;
       if (globalTimerRef.current) clearInterval(globalTimerRef.current);
+      setCurrentQuestion(null);
       playGameCompleteSound();
       const finalState = {
         ...stateRef.current,
-        globalElapsed: elapsedRef.current,
+        globalElapsed: Math.min(elapsedRef.current, GAME_TIME_LIMIT_SECONDS),
         finished: true,
         tabSwitches,
         tabSwitchCount: tabSwitches.length,
@@ -244,7 +246,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
       syncTeam(finalState);
       setTimeout(() => onFinish(finalState), 500);
     }
-  }, [isGameOver, currentQuestion]);
+  }, [isGameOver, onFinish, syncTeam, tabSwitches]);
 
   const handleSpinComplete = (divIndex: number) => {
     if (divIndex < questions.length) {
@@ -254,6 +256,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
   };
 
   const handleSubmit = async (correct: boolean) => {
+    if (finishTriggeredRef.current) return;
     const divIndex = currentQuestion!.divIndex;
     const pts = { easy: 10, medium: 15, hard: 20 }[currentQuestion!.q.diff] || 10;
     const newUsed = new Set(usedDivisions); newUsed.add(divIndex);
@@ -277,25 +280,6 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
       score: newScore, answered: newAnswered, correctCount: newCorrect, wrongCount: newWrong,
       spinCount: newSpinCount, usedDivisions: Array.from(newUsed), attemptLog: newLog,
       globalElapsed: elapsedRef.current,
-    });
-  };
-
-  const handleSkip = async () => {
-    const divIndex = currentQuestion!.divIndex;
-    const newUsed = new Set(usedDivisions); newUsed.add(divIndex);
-    const newLog = [...attemptLog, { qIndex: divIndex, action: 'skipped' }];
-    const newSkipped = skippedCount + 1;
-    const newSpinCount = spinCount + 1;
-
-    setUsedDivisions(newUsed); setAttemptLog(newLog); setSkippedCount(newSkipped);
-    setSpinCount(newSpinCount); setCurrentQuestion(null);
-    toast('⏭ Skipped!', 'warn');
-
-    if ((window as any).__spinnerTriggerRemove) (window as any).__spinnerTriggerRemove(divIndex);
-
-    await syncTeam({
-      skippedCount: newSkipped, spinCount: newSpinCount,
-      usedDivisions: Array.from(newUsed), attemptLog: newLog, globalElapsed: elapsedRef.current,
     });
   };
 
@@ -393,7 +377,6 @@ const GameScreen: React.FC<GameScreenProps> = ({ teamName, questions, initialSta
             question={currentQuestion.q}
             divisionIndex={currentQuestion.divIndex}
             onSubmit={handleSubmit}
-            onSkip={handleSkip}
             open={!!currentQuestion}
           />
         )}

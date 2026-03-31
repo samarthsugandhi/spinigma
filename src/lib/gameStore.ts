@@ -2,7 +2,14 @@ import { db } from './firebase';
 import { collection, getDocs, setDoc, doc, writeBatch, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { Question, DEFAULT_QUESTIONS } from './questions';
 
-const ADMIN_PASSPHRASE = import.meta.env.VITE_ADMIN_PASSPHRASE || 'Z9@vT#4qLp!8Xr$2';
+const ADMIN_PASSPHRASE_FALLBACK = 'Z9@vT#4qLp!8Xr$2';
+const ADMIN_PASSPHRASE = import.meta.env.VITE_ADMIN_PASSPHRASE || ADMIN_PASSPHRASE_FALLBACK;
+
+const normalizePass = (s: string) => s
+  .trim()
+  .replace(/^['"]|['"]$/g, '')
+  .replace(/\\#/g, '#')
+  .replace(/\\\$/g, '$');
 
 let _teamsCache: Record<string, any> = {};
 let _qCache: Question[] | null = null;
@@ -12,6 +19,12 @@ export const getSettings = (): any => {
 };
 export const saveSettings_ = (s: any) => localStorage.setItem('rmSettings', JSON.stringify(s));
 export const getAdminPass = () => ADMIN_PASSPHRASE;
+export const isAdminPassValid = (pass: string) => {
+  const entered = normalizePass(pass);
+  const fromEnv = normalizePass(ADMIN_PASSPHRASE);
+  const fallback = normalizePass(ADMIN_PASSPHRASE_FALLBACK);
+  return entered === fromEnv || entered === fallback;
+};
 
 export async function fetchTeams(): Promise<Record<string, any>> {
   try {
@@ -111,6 +124,55 @@ export async function fetchQuestions(): Promise<Question[]> {
 }
 
 export function getQCache(): Question[] { return _qCache || DEFAULT_QUESTIONS; }
+
+export async function upsertTeamProgress(name: string, t: any): Promise<boolean> {
+  try {
+    const row: Record<string, any> = { name };
+
+    if (t.lead !== undefined) row.lead = t.lead;
+    if (t.score !== undefined) row.score = t.score;
+    if (t.answered !== undefined) row.answered = t.answered;
+    if (t.skippedCount !== undefined) row.skipped_count = t.skippedCount;
+    if (t.correctCount !== undefined) row.correct_count = t.correctCount;
+    if (t.wrongCount !== undefined) row.wrong_count = t.wrongCount;
+    if (t.spinCount !== undefined) row.spin_count = t.spinCount;
+    if (t.usedDivisions !== undefined) row.used_divisions = t.usedDivisions;
+    if (t.attemptLog !== undefined) row.attempt_log = t.attemptLog;
+    if (t.finished !== undefined) row.finished = t.finished;
+    if (t.globalElapsed !== undefined) row.global_elapsed = t.globalElapsed;
+    if (t.joinedAt !== undefined) row.joined_at = t.joinedAt;
+    if (t.tabSwitchCount !== undefined) row.tab_switch_count = t.tabSwitchCount;
+    if (t.tabSwitches !== undefined) row.tab_switches = t.tabSwitches;
+    if (t.last !== undefined) row.last = t.last;
+
+    const docRef = doc(db, 'teams', name);
+    await setDoc(docRef, row, { merge: true });
+
+    _teamsCache[name] = {
+      ..._teamsCache[name],
+      name,
+      lead: row.lead ?? _teamsCache[name]?.lead,
+      score: row.score ?? _teamsCache[name]?.score,
+      answered: row.answered ?? _teamsCache[name]?.answered,
+      skippedCount: row.skipped_count ?? _teamsCache[name]?.skippedCount,
+      correctCount: row.correct_count ?? _teamsCache[name]?.correctCount,
+      wrongCount: row.wrong_count ?? _teamsCache[name]?.wrongCount,
+      spinCount: row.spin_count ?? _teamsCache[name]?.spinCount,
+      usedDivisions: row.used_divisions ?? _teamsCache[name]?.usedDivisions,
+      attemptLog: row.attempt_log ?? _teamsCache[name]?.attemptLog,
+      finished: row.finished ?? _teamsCache[name]?.finished,
+      globalElapsed: row.global_elapsed ?? _teamsCache[name]?.globalElapsed,
+      joinedAt: row.joined_at ?? _teamsCache[name]?.joinedAt,
+      tabSwitchCount: row.tab_switch_count ?? _teamsCache[name]?.tabSwitchCount,
+      tabSwitches: row.tab_switches ?? _teamsCache[name]?.tabSwitches,
+      last: row.last ?? _teamsCache[name]?.last,
+    };
+    return true;
+  } catch (e) {
+    console.error('upsertTeamProgress error:', e);
+    return false;
+  }
+}
 
 export async function saveQuestions(qs: Question[]): Promise<void> {
   _qCache = qs;

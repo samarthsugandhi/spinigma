@@ -12,12 +12,12 @@ const TEAM_PASSKEY = 'AMIGINPS';
 const LoginScreen: React.FC<LoginScreenProps> = ({ onTeamLogin, onAdminLogin }) => {
   const [tab, setTab] = useState<'team' | 'admin'>('team');
   const [teamId, setTeamId] = useState('');
-  const [teamName, setTeamName] = useState('');
   const [leadName, setLeadName] = useState('');
   const [passkey, setPasskey] = useState('');
   const [adminPass, setAdminPass] = useState('');
   const [shake, setShake] = useState(false);
   const [passkeyError, setPasskeyError] = useState(false);
+  const [teamIdError, setTeamIdError] = useState(false);
 
   const handleTeamSubmit = () => {
     if (passkey.toUpperCase() !== TEAM_PASSKEY) {
@@ -26,9 +26,17 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onTeamLogin, onAdminLogin }) 
       setTimeout(() => setShake(false), 600);
       return;
     }
+    const normalizedTeamId = teamId.trim().toUpperCase();
+    if (!/^IS-TP-\d{3}$/.test(normalizedTeamId)) {
+      setTeamIdError(true);
+      setShake(true);
+      setTimeout(() => setShake(false), 600);
+      return;
+    }
     setPasskeyError(false);
+    setTeamIdError(false);
     playEntrySound();
-    onTeamLogin(teamName, leadName);
+    onTeamLogin(normalizedTeamId, leadName);
   };
 
   return (
@@ -156,33 +164,24 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onTeamLogin, onAdminLogin }) 
               </div>
               <div className="field-anim" style={{ marginBottom: '14px', animationDelay: '0.1s' }}>
                 <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '2px', color: 'hsl(270 95% 75%)', marginBottom: '6px', textTransform: 'uppercase' }}>Team ID</label>
-                <input type="text" value={teamId} onChange={e => setTeamId(e.target.value)}
-                  placeholder="Enter your team ID…" autoComplete="off"
+                <input type="text" value={teamId} onChange={e => { setTeamId(e.target.value.toUpperCase()); setTeamIdError(false); }}
+                  placeholder="IS-TP-XXX" autoComplete="off"
                   style={{
-                    width: '100%', background: 'hsl(250 20% 14%)', border: '1.5px solid hsl(250 30% 20%)',
+                    width: '100%', background: 'hsl(250 20% 14%)', border: `1.5px solid ${teamIdError ? 'hsl(0 84% 60% / 0.6)' : 'hsl(250 30% 20%)'}`,
                     borderRadius: '11px', color: 'hsl(0 0% 92%)', fontFamily: "'Space Grotesk',sans-serif",
                     fontSize: '0.92rem', fontWeight: 600, padding: '11px 15px', outline: 'none',
                     transition: 'border-color 0.2s',
                   }}
                   onFocus={e => e.target.style.borderColor = 'hsl(270 95% 65% / 0.5)'}
-                  onBlur={e => e.target.style.borderColor = 'hsl(250 30% 20%)'}
+                  onBlur={e => e.target.style.borderColor = teamIdError ? 'hsl(0 84% 60% / 0.6)' : 'hsl(250 30% 20%)'}
                 />
+                {teamIdError && (
+                  <p style={{ fontSize: '0.7rem', color: 'hsl(0 84% 60%)', marginTop: '4px', fontWeight: 600 }}>
+                    ✕ Team ID format must be IS-TP-001
+                  </p>
+                )}
               </div>
               <div className="field-anim" style={{ marginBottom: '14px', animationDelay: '0.15s' }}>
-                <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '2px', color: 'hsl(270 95% 75%)', marginBottom: '6px', textTransform: 'uppercase' }}>Team Name</label>
-                <input type="text" value={teamName} onChange={e => setTeamName(e.target.value)}
-                  placeholder="Enter your team name…" autoComplete="off"
-                  style={{
-                    width: '100%', background: 'hsl(250 20% 14%)', border: '1.5px solid hsl(250 30% 20%)',
-                    borderRadius: '11px', color: 'hsl(0 0% 92%)', fontFamily: "'Space Grotesk',sans-serif",
-                    fontSize: '0.92rem', fontWeight: 600, padding: '11px 15px', outline: 'none',
-                    transition: 'border-color 0.2s',
-                  }}
-                  onFocus={e => e.target.style.borderColor = 'hsl(270 95% 65% / 0.5)'}
-                  onBlur={e => e.target.style.borderColor = 'hsl(250 30% 20%)'}
-                />
-              </div>
-              <div className="field-anim" style={{ marginBottom: '14px', animationDelay: '0.2s' }}>
                 <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '2px', color: 'hsl(270 95% 75%)', marginBottom: '6px', textTransform: 'uppercase' }}>Team Lead Name</label>
                 <input type="text" value={leadName} onChange={e => setLeadName(e.target.value)}
                   placeholder="Team leader's name…" autoComplete="off"
@@ -196,12 +195,12 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onTeamLogin, onAdminLogin }) 
                   onBlur={e => e.target.style.borderColor = 'hsl(250 30% 20%)'}
                 />
               </div>
-              <p className="field-anim" style={{ fontSize: '0.76rem', color: 'hsl(250 15% 50%)', marginBottom: '14px', lineHeight: 1.5, animationDelay: '0.25s' }}>
+              <p className="field-anim" style={{ fontSize: '0.76rem', color: 'hsl(250 15% 50%)', marginBottom: '14px', lineHeight: 1.5, animationDelay: '0.2s' }}>
                 ✦ Enter the event passkey to unlock the arena.
               </p>
               <button onClick={handleTeamSubmit} className="glow-btn field-anim" style={{
                 width: '100%', padding: '13px', fontSize: '0.82rem', letterSpacing: '2px', textTransform: 'uppercase',
-                animationDelay: '0.3s',
+                animationDelay: '0.25s',
               }}>🎡 Enter the Arena</button>
             </>
           ) : (

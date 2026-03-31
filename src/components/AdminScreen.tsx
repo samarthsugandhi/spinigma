@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { fetchTeams, saveTeamData, fetchQuestions, getQCache, saveQuestions, getSettings, saveSettings_ } from '@/lib/gameStore';
-import { Question, MAX_SPINS, TOTAL_DIVISIONS } from '@/lib/questions';
+import { Question, MAX_SPINS } from '@/lib/questions';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface AdminScreenProps {
   onLogout: () => void;
@@ -71,14 +73,94 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onLogout }) => {
     }
   };
 
+  const getElapsed = (t: any) => (typeof t.globalElapsed === 'number' ? t.globalElapsed : Number.MAX_SAFE_INTEGER);
+
   const teamList = Object.values(teams).sort((a: any, b: any) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return (a.globalElapsed || 999999) - (b.globalElapsed || 999999);
+    if ((b.score || 0) !== (a.score || 0)) return (b.score || 0) - (a.score || 0);
+    const timeDiff = getElapsed(a) - getElapsed(b);
+    if (timeDiff !== 0) return timeDiff;
+    return String(a.name || '').localeCompare(String(b.name || ''));
   });
+
+  const leaderboardRows = teamList.map((t: any) => ({
+    teamId: t.name || '—',
+    lead: t.lead || '—',
+    score: t.score || 0,
+    correct: t.correctCount || 0,
+    wrong: t.wrongCount || 0,
+    time: getElapsed(t) === Number.MAX_SAFE_INTEGER ? '—' : fmtTime(getElapsed(t)),
+    switches: t.tabSwitchCount || 0,
+    status: t.finished ? 'Done' : `${t.spinCount || 0}/${MAX_SPINS}`,
+  }));
 
   const topScore = teamList[0]?.score || 0;
   const avgScore = teamList.length ? Math.round(teamList.reduce((s: number, t: any) => s + (t.score || 0), 0) / teamList.length) : 0;
   const doneCount = teamList.filter((t: any) => t.finished).length;
+
+  const exportLeaderboardCsv = () => {
+    if (leaderboardRows.length === 0) {
+      toast('No leaderboard data to export.', 'warn');
+      return;
+    }
+
+    const headers = ['Team-ID', 'Lead', 'Score', 'Correct', 'Wrong', 'Time', 'Switch', 'Status'];
+    const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+    const lines = [
+      headers.join(','),
+      ...leaderboardRows.map(r => [
+        esc(r.teamId),
+        esc(r.lead),
+        esc(r.score),
+        esc(r.correct),
+        esc(r.wrong),
+        esc(r.time),
+        esc(r.switches),
+        esc(r.status),
+      ].join(',')),
+    ];
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `leaderboard-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Leaderboard exported as CSV.', 'ok');
+  };
+
+  const exportLeaderboardPdf = () => {
+    if (leaderboardRows.length === 0) {
+      toast('No leaderboard data to export.', 'warn');
+      return;
+    }
+
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    doc.setFontSize(14);
+    doc.text('SPINIGMA Leaderboard', 40, 36);
+    doc.setFontSize(10);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 40, 54);
+
+    autoTable(doc, {
+      startY: 70,
+      head: [['Team-ID', 'Lead', 'Score', 'Correct', 'Wrong', 'Time', 'Switch', 'Status']],
+      body: leaderboardRows.map(r => [
+        r.teamId,
+        r.lead,
+        String(r.score),
+        String(r.correct),
+        String(r.wrong),
+        r.time,
+        String(r.switches),
+        r.status,
+      ]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [88, 40, 140] },
+    });
+
+    doc.save(`leaderboard-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.pdf`);
+    toast('Leaderboard exported as PDF.', 'ok');
+  };
 
   const deleteTeam = async (name: string) => {
     if (!confirm(`Remove "${name}"?`)) return;
@@ -187,8 +269,31 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onLogout }) => {
           {/* LEADERBOARD */}
           {activeNav === 'Leaderboard' && (
             <div>
-              <div className="gradient-text" style={{ fontFamily: "'Nunito',sans-serif", fontSize: '1.15rem', fontWeight: 900, letterSpacing: '1px', marginBottom: '18px', paddingBottom: '11px', borderBottom: `1px solid ${C.cardBorder}` }}>
-                🏆 Live Leaderboard
+              <div style={{
+                marginBottom: '18px', paddingBottom: '11px', borderBottom: `1px solid ${C.cardBorder}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+              }}>
+                <div className="gradient-text" style={{ fontFamily: "'Nunito',sans-serif", fontSize: '1.15rem', fontWeight: 900, letterSpacing: '1px' }}>
+                  🏆 Live Leaderboard
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={exportLeaderboardCsv}
+                    style={{
+                      padding: '8px 12px', borderRadius: '8px', border: `1px solid ${C.cardBorder}`,
+                      background: 'hsl(185 90% 50% / 0.12)', color: C.accent,
+                      fontSize: '0.68rem', fontWeight: 800, letterSpacing: '1px', cursor: 'pointer', textTransform: 'uppercase',
+                    }}
+                  >⬇ CSV</button>
+                  <button
+                    onClick={exportLeaderboardPdf}
+                    style={{
+                      padding: '8px 12px', borderRadius: '8px', border: `1px solid ${C.cardBorder}`,
+                      background: 'hsl(330 85% 60% / 0.12)', color: C.pink,
+                      fontSize: '0.68rem', fontWeight: 800, letterSpacing: '1px', cursor: 'pointer', textTransform: 'uppercase',
+                    }}
+                  >⬇ PDF</button>
+                </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '12px', marginBottom: '22px' }}>
                 {[
@@ -212,40 +317,28 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onLogout }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
-                      {['#', 'Team', 'Lead', 'Score', '✅', '❌', '⏭', '⏱ Time', '🛡️', 'Status'].map(h => (
+                      {['Team-ID', 'Lead', 'Score', 'Correct', 'Wrong', 'Time', 'Switch', 'Status'].map(h => (
                         <th key={h} style={{ fontSize: '0.6rem', fontWeight: 800, letterSpacing: '2px', color: C.muted, textTransform: 'uppercase', textAlign: 'left', padding: '9px 11px', borderBottom: `1px solid ${C.cardBorder}` }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {teamList.length === 0 ? (
-                      <tr><td colSpan={10} style={{ textAlign: 'center', color: C.muted, padding: '30px' }}>No teams yet…</td></tr>
-                    ) : teamList.map((t: any, i: number) => {
-                      const rc = i === 0 ? '#ffd700' : i === 1 ? '#c0c0c0' : i === 2 ? '#cd7f32' : 'hsl(270 95% 65% / 0.15)';
-                      const w = topScore > 0 ? ((t.score || 0) / topScore * 100).toFixed(0) : '0';
+                      <tr><td colSpan={8} style={{ textAlign: 'center', color: C.muted, padding: '30px' }}>No teams yet…</td></tr>
+                    ) : teamList.map((t: any) => {
+                      const elapsed = getElapsed(t);
                       return (
                         <tr key={t.name} style={{ borderBottom: `1px solid hsl(250 30% 14%)` }}>
-                          <td style={{ padding: '10px 11px' }}>
-                            <div style={{ width: '25px', height: '25px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Nunito',sans-serif", fontSize: '0.7rem', fontWeight: 900, background: rc, color: i < 3 ? '#000' : C.label, border: i >= 3 ? `1.5px solid hsl(270 95% 65% / 0.25)` : 'none' }}>{i + 1}</div>
-                          </td>
                           <td style={{ padding: '10px 11px', fontWeight: 700, fontSize: '0.86rem', color: C.text }}>{t.name}</td>
                           <td style={{ padding: '10px 11px', color: C.muted, fontWeight: 600, fontSize: '0.86rem' }}>{t.lead || '—'}</td>
-                          <td style={{ padding: '10px 11px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <div style={{ flex: 1, height: '5px', background: 'hsl(250 20% 14%)', borderRadius: '10px', overflow: 'hidden' }}>
-                                <div style={{ height: '100%', background: 'linear-gradient(90deg, hsl(270 95% 65%), hsl(330 85% 60%))', borderRadius: '10px', width: `${w}%` }} />
-                              </div>
-                              <span style={{ fontFamily: "'Nunito',sans-serif", fontSize: '0.86rem', fontWeight: 800, color: C.primary, minWidth: '42px', textAlign: 'right' }}>{t.score || 0}</span>
-                            </div>
-                          </td>
+                          <td style={{ padding: '10px 11px', fontFamily: "'Nunito',sans-serif", fontSize: '0.86rem', fontWeight: 800, color: C.primary }}>{t.score || 0}</td>
                           <td style={{ padding: '10px 11px', color: C.green, fontWeight: 700, fontSize: '0.86rem' }}>{t.correctCount || 0}</td>
                           <td style={{ padding: '10px 11px', color: C.red, fontWeight: 700, fontSize: '0.86rem' }}>{t.wrongCount || 0}</td>
-                          <td style={{ padding: '10px 11px', color: C.orange, fontWeight: 700, fontSize: '0.86rem' }}>{t.skippedCount || 0}</td>
-                          <td style={{ padding: '10px 11px', fontFamily: "'Fira Code',monospace", fontSize: '0.78rem', color: C.accent }}>{fmtTime(t.globalElapsed || 0)}</td>
+                          <td style={{ padding: '10px 11px', fontFamily: "'Fira Code',monospace", fontSize: '0.78rem', color: C.accent }}>{elapsed === Number.MAX_SAFE_INTEGER ? '—' : fmtTime(elapsed)}</td>
                           <td style={{ padding: '10px 11px', fontSize: '0.86rem' }}>
                             {(t.tabSwitchCount || 0) > 0
-                              ? <span style={{ color: C.red, fontWeight: 700 }}>⚠️ {t.tabSwitchCount}</span>
-                              : <span style={{ color: C.green, fontWeight: 700 }}>✅</span>}
+                              ? <span style={{ color: C.red, fontWeight: 700 }}>{t.tabSwitchCount}</span>
+                              : <span style={{ color: C.green, fontWeight: 700 }}>0</span>}
                           </td>
                           <td style={{ padding: '10px 11px', fontSize: '0.86rem' }}>
                             {t.finished
@@ -280,8 +373,7 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onLogout }) => {
                         Score: <b style={{ color: C.primary }}>{t.score || 0}</b><br />
                         Spins: <b style={{ color: C.accent }}>{t.spinCount || 0}/{MAX_SPINS}</b><br />
                         Correct: <b style={{ color: C.green }}>{t.correctCount || 0}</b> |
-                        Wrong: <b style={{ color: C.red }}>{t.wrongCount || 0}</b> |
-                        Skipped: <b style={{ color: C.orange }}>{t.skippedCount || 0}</b><br />
+                        Wrong: <b style={{ color: C.red }}>{t.wrongCount || 0}</b><br />
                         Time: <b style={{ color: C.accent }}>{fmtTime(t.globalElapsed || 0)}</b><br />
                         {t.finished ? <span style={{ color: C.green }}>✅ Finished!</span> : <span style={{ color: C.orange }}>🟡 Active</span>}
                       </div>
@@ -292,7 +384,7 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onLogout }) => {
                           <div style={{ maxHeight: '120px', overflowY: 'auto', fontSize: '0.72rem', color: C.muted, lineHeight: 1.8 }}>
                             {t.attemptLog.map((a: any, i: number) => (
                               <div key={i}>
-                                Q{a.qIndex + 1}: {a.action === 'skipped' ? '⏭ Skipped' : a.correct ? '✅ Correct' : '❌ Wrong'}
+                                Q{a.qIndex + 1}: {a.correct ? '✅ Correct' : '❌ Wrong'}
                               </div>
                             ))}
                           </div>

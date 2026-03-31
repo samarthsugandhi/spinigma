@@ -183,7 +183,7 @@ const SpinnerWheel: React.FC<SpinnerWheelProps> = ({
       } else {
         const sliceAngle = (Math.PI * 2) / divisions.length;
         const normalizedAngle = ((-(angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2));
-        const pointerAngle = (normalizedAngle + Math.PI / 2) % (Math.PI * 2);
+        const pointerAngle = (normalizedAngle + (Math.PI * 3) / 2) % (Math.PI * 2);
         const landedIndex = Math.floor(pointerAngle / sliceAngle) % divisions.length;
         const landedDiv = divisions[landedIndex];
 
